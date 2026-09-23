@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Spider Swing</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="game-shell">
+      <div class="hud">
+        <div class="title">Spider Swing</div>
+        <div id="status">Swing to the skyline</div>
+      </div>
+
+      <canvas id="gameCanvas" width="960" height="540" aria-label="Spider swing game"></canvas>
+
+      <div class="controls">
+        <div class="touch-row">
+          <button class="control-btn" data-control="left">◀</button>
+          <button class="control-btn" data-control="right">▶</button>
+        </div>
+        <div class="touch-row">
+          <button class="control-btn accent" data-control="jump">Jump</button>
+          <button class="control-btn accent" data-control="swing">Web</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="game.js"></script>
+  </body>
+</html>

@@ -3,444 +3,164 @@ const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
 const installBtn = document.getElementById('installBtn');
 
-let deferredPrompt = null;
-
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./service-worker.js').catch(() => {});
-  });
+  window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(() => {}));
 }
 
+let deferredPrompt = null;
 window.addEventListener('beforeinstallprompt', (event) => {
   event.preventDefault();
   deferredPrompt = event;
-  installBtn.hidden = false;
+  if (installBtn) installBtn.hidden = false;
 });
+if (installBtn) {
+  installBtn.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    deferredPrompt = null;
+    installBtn.hidden = true;
+  });
+}
 
-installBtn.addEventListener('click', async () => {
-  if (!deferredPrompt) return;
-  deferredPrompt.prompt();
-  const choice = await deferredPrompt.userChoice;
-  if (choice.outcome === 'accepted') {
-    statusEl.textContent = 'App installed';
-  }
-  deferredPrompt = null;
-  installBtn.hidden = true;
-});
-
-const world = {
-  width: 2200,
-  height: canvas.height,
-  gravity: 0.55,
-  groundY: 500,
-};
-
-const controls = {
-  left: false,
-  right: false,
-  jumpQueued: false,
-  swingQueued: false,
-};
-
+const world = { width: 2200, groundY: 500, gravity: 0.55 };
+const controls = { left: false, right: false, jump: false, web: false };
 const platforms = [
   { x: 0, y: 500, w: 2200, h: 80 },
-  { x: 190, y: 420, w: 210, h: 16 },
-  { x: 500, y: 330, w: 170, h: 16 },
-  { x: 820, y: 390, w: 240, h: 16 },
-  { x: 1180, y: 300, w: 200, h: 16 },
-  { x: 1490, y: 380, w: 240, h: 16 },
-  { x: 1810, y: 260, w: 300, h: 16 },
+  { x: 190, y: 420, w: 210, h: 16 }, { x: 500, y: 330, w: 170, h: 16 },
+  { x: 820, y: 390, w: 240, h: 16 }, { x: 1180, y: 300, w: 200, h: 16 },
+  { x: 1490, y: 380, w: 240, h: 16 }, { x: 1810, y: 260, w: 300, h: 16 },
 ];
-
 const anchors = [
-  { x: 240, y: 350 },
-  { x: 610, y: 260 },
-  { x: 930, y: 300 },
-  { x: 1280, y: 220 },
-  { x: 1600, y: 290 },
-  { x: 1930, y: 190 },
+  { x: 240, y: 350 }, { x: 610, y: 260 }, { x: 930, y: 300 },
+  { x: 1280, y: 220 }, { x: 1600, y: 290 }, { x: 1930, y: 190 },
 ];
-
 const goal = { x: 2085, y: 145, w: 52, h: 80 };
-
-const player = {
-  x: 90,
-  y: 420,
-  radius: 18,
-  vx: 0,
-  vy: 0,
-  onGround: false,
-  swinging: false,
-  anchor: null,
-  ropeLength: 0,
-  swingAngle: 0,
-  swingVelocity: 0,
-  facing: 1,
-};
-
+const player = { x: 90, y: 420, r: 18, vx: 0, vy: 0, ground: false, swinging: false, anchor: null, rope: 0, angle: 0, angular: 0, facing: 1 };
 const camera = { x: 0 };
 
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
+function clamp(n, min, max) { return Math.min(Math.max(n, min), max); }
+function reset() { Object.assign(player, { x: 90, y: 420, vx: 0, vy: 0, ground: false, swinging: false, anchor: null, rope: 0, angle: 0, angular: 0, facing: 1 }); }
 
-function resetPlayer() {
-  player.x = 90;
-  player.y = 420;
-  player.vx = 0;
-  player.vy = 0;
-  player.onGround = false;
-  player.swinging = false;
-  player.anchor = null;
-  player.ropeLength = 0;
-  player.swingAngle = 0;
-  player.swingVelocity = 0;
-  player.facing = 1;
-}
-
-function attachToNearestAnchor() {
-  let best = null;
-  let bestDist = Infinity;
-
+function nearestAnchor() {
+  let result = null;
   for (const anchor of anchors) {
-    const dx = player.x - anchor.x;
-    const dy = player.y - anchor.y;
-    const dist = Math.hypot(dx, dy);
-
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = { anchor, dist };
-    }
+    const distance = Math.hypot(player.x - anchor.x, player.y - anchor.y);
+    if (!result || distance < result.distance) result = { anchor, distance };
   }
-
-  if (best && best.dist < 120 && !player.swinging) {
-    player.anchor = best.anchor;
-    player.ropeLength = best.dist || 120;
-    player.swingAngle = Math.atan2(player.y - best.anchor.y, player.x - best.anchor.x);
-    player.swingVelocity = 0;
-    player.swinging = true;
-    player.vx = 0;
-    player.vy = 0;
-    return true;
-  }
-
-  return false;
+  return result;
 }
 
-function releaseSwing() {
-  if (!player.swinging) return;
-
-  const angle = player.swingAngle;
-  const releaseSpeed = 8.5;
-
-  player.swinging = false;
-  player.anchor = null;
-  player.vx = Math.cos(angle) * releaseSpeed;
-  player.vy = Math.sin(angle) * releaseSpeed + 1.4;
-  player.ropeLength = 0;
-  if (controls.left) player.vx -= 1.6;
-  if (controls.right) player.vx += 1.6;
-}
-
-function handleMovement() {
-  if (player.swinging) {
-    const anchor = player.anchor;
-    if (!anchor) {
-      player.swinging = false;
-      return;
-    }
-
-    if (controls.left) player.swingVelocity -= 0.02;
-    if (controls.right) player.swingVelocity += 0.02;
-
-    player.swingVelocity *= 0.985;
-    player.swingAngle += player.swingVelocity;
-
-    const prevX = player.x;
-    const prevY = player.y;
-    player.x = anchor.x + Math.cos(player.swingAngle) * player.ropeLength;
-    player.y = anchor.y + Math.sin(player.swingAngle) * player.ropeLength;
-    player.vx = (player.x - prevX) * 0.7;
-    player.vy = (player.y - prevY) * 0.7;
-
-    if (player.y > world.groundY || player.x < 0 || player.x > world.width) {
-      player.y = Math.min(player.y, world.groundY - 10);
-      player.swinging = false;
-      player.anchor = null;
-    }
-
+function attachWeb() {
+  const nearest = nearestAnchor();
+  // The old range was 120px, but the player starts about 165px from the first anchor.
+  // A 230px range makes the first web reachable and is much easier on touch screens.
+  if (!nearest || nearest.distance > 230) {
+    statusEl.textContent = 'Move or jump closer to a yellow anchor';
     return;
   }
-
-  const moveAxis = (controls.left ? -1 : 0) + (controls.right ? 1 : 0);
-  if (moveAxis !== 0) {
-    player.vx += moveAxis * 0.66;
-    player.facing = moveAxis;
-  } else {
-    player.vx *= 0.8;
-  }
-
-  player.vx = clamp(player.vx, -7.2, 7.2);
-  player.vy += world.gravity;
-  player.vy = clamp(player.vy, -18, 18);
-
-  player.x += player.vx;
-  player.y += player.vy;
-
-  player.onGround = false;
-
-  for (const platform of platforms) {
-    const withinX = player.x + player.radius > platform.x && player.x - player.radius < platform.x + platform.w;
-    const falling = player.vy >= 0;
-    const touchingTop = player.y + player.radius >= platform.y && player.y + player.radius <= platform.y + 26;
-
-    if (withinX && falling && touchingTop) {
-      player.y = platform.y - player.radius;
-      player.vy = 0;
-      player.onGround = true;
-      break;
-    }
-  }
-
-  if (player.y + player.radius > world.groundY) {
-    player.y = world.groundY - player.radius;
-    player.vy = 0;
-    player.onGround = true;
-  }
-
-  if (player.y > canvas.height + 60) {
-    resetPlayer();
-  }
-
-  if (player.x < player.radius) {
-    player.x = player.radius;
-    player.vx = 0;
-  }
-
-  if (player.x > world.width - player.radius) {
-    player.x = world.width - player.radius;
-    player.vx = 0;
-  }
-
-  if (player.onGround && controls.jumpQueued) {
-    player.vy = -12.6;
-    player.onGround = false;
-  }
+  player.anchor = nearest.anchor;
+  player.rope = Math.max(70, nearest.distance);
+  player.angle = Math.atan2(player.y - nearest.anchor.y, player.x - nearest.anchor.x);
+  player.angular = 0.018;
+  player.swinging = true;
+  player.vx = 0;
+  player.vy = 0;
+  statusEl.textContent = 'Web attached — hold ◀ or ▶ to pump the swing';
 }
 
-function updateCamera() {
-  const target = player.x - canvas.width * 0.38;
-  camera.x = clamp(target, 0, world.width - canvas.width);
+function releaseWeb() {
+  if (!player.swinging) return;
+  const a = player.angle;
+  player.swinging = false;
+  player.anchor = null;
+  player.vx = Math.cos(a) * 9;
+  player.vy = Math.sin(a) * 9 + 1;
+  player.rope = 0;
 }
 
 function update() {
-  if (controls.jumpQueued && !player.swinging) {
-    if (player.onGround) {
-      player.vy = -12.6;
-      player.onGround = false;
-    }
-    controls.jumpQueued = false;
+  if (controls.web) {
+    controls.web = false;
+    if (player.swinging) releaseWeb(); else attachWeb();
+  }
+  if (controls.jump && player.ground && !player.swinging) {
+    player.vy = -13;
+    player.ground = false;
+    controls.jump = false;
   }
 
-  if (controls.swingQueued) {
-    if (player.swinging) {
-      releaseSwing();
-    } else {
-      attachToNearestAnchor();
-    }
-    controls.swingQueued = false;
-  }
-
-  handleMovement();
-  updateCamera();
-
-  const reachedGoal =
-    player.x + player.radius > goal.x &&
-    player.x - player.radius < goal.x + goal.w &&
-    player.y + player.radius > goal.y &&
-    player.y - player.radius < goal.y + goal.h;
-
-  if (reachedGoal) {
-    statusEl.textContent = 'Mission complete!';
-  } else if (player.swinging) {
-    statusEl.textContent = 'Swinging through the city';
-  } else if (player.onGround) {
-    statusEl.textContent = 'Stay mobile and keep climbing';
+  if (player.swinging) {
+    if (controls.left) player.angular -= 0.025;
+    if (controls.right) player.angular += 0.025;
+    player.angular *= 0.99;
+    player.angle += player.angular;
+    const oldX = player.x;
+    const oldY = player.y;
+    player.x = player.anchor.x + Math.cos(player.angle) * player.rope;
+    player.y = player.anchor.y + Math.sin(player.angle) * player.rope;
+    player.vx = (player.x - oldX) * 0.8;
+    player.vy = (player.y - oldY) * 0.8;
+    if (player.y > world.groundY || player.x < 0 || player.x > world.width) releaseWeb();
   } else {
-    statusEl.textContent = 'Swing to the skyline';
-  }
-}
-
-function drawBackground() {
-  const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  sky.addColorStop(0, '#14a2ff');
-  sky.addColorStop(0.55, '#bce6ff');
-  sky.addColorStop(1, '#edf8ff');
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  for (let i = 0; i < 18; i++) {
-    const x = i * 70 - (camera.x * 0.2) % 130;
-    const y = 60 + (i % 5) * 28;
-    const size = 2 + (i % 3);
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
-    ctx.fillRect(x, y, size, size);
-  }
-
-  const cityOffset = -camera.x * 0.5;
-  for (let i = 0; i < 24; i++) {
-    const x = i * 110 + (cityOffset % 110);
-    const height = 70 + (i % 6) * 40;
-    const y = world.groundY - height;
-    ctx.fillStyle = 'rgba(29, 50, 76, 0.72)';
-    ctx.fillRect(x, y, 65, height);
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    for (let j = 0; j < 5; j++) {
-      ctx.fillRect(x + 12 + j * 12, y + 12, 5, height - 26);
+    const axis = (controls.left ? -1 : 0) + (controls.right ? 1 : 0);
+    if (axis) { player.vx += axis * 0.65; player.facing = axis; } else player.vx *= 0.8;
+    player.vx = clamp(player.vx, -7.5, 7.5);
+    player.vy = clamp(player.vy + world.gravity, -18, 18);
+    player.x += player.vx;
+    player.y += player.vy;
+    player.ground = false;
+    for (const p of platforms) {
+      const over = player.x + player.r > p.x && player.x - player.r < p.x + p.w;
+      if (over && player.vy >= 0 && player.y + player.r >= p.y && player.y + player.r <= p.y + 26) {
+        player.y = p.y - player.r; player.vy = 0; player.ground = true; break;
+      }
     }
+    if (player.y + player.r > world.groundY) { player.y = world.groundY - player.r; player.vy = 0; player.ground = true; }
+    if (player.y > canvas.height + 60) reset();
+    player.x = clamp(player.x, player.r, world.width - player.r);
   }
-}
-
-function drawPlatforms() {
-  for (const p of platforms) {
-    const x = p.x - camera.x;
-    const y = p.y;
-    const grad = ctx.createLinearGradient(x, y, x, y + p.h);
-    grad.addColorStop(0, '#3b5c88');
-    grad.addColorStop(1, '#1e304f');
-    ctx.fillStyle = grad;
-    ctx.fillRect(x, y, p.w, p.h);
-    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-    ctx.strokeRect(x, y, p.w, p.h);
-  }
-}
-
-function drawAnchors() {
-  for (const anchor of anchors) {
-    const x = anchor.x - camera.x;
-    const y = anchor.y;
-
-    ctx.beginPath();
-    ctx.fillStyle = '#ffde59';
-    ctx.arc(x, y, 7, 0, Math.PI * 2);
-    ctx.fill();
-
-    if (player.swinging && player.anchor === anchor) {
-      ctx.beginPath();
-      ctx.lineWidth = 2.4;
-      ctx.strokeStyle = '#e8f2ff';
-      ctx.moveTo(anchor.x - camera.x, anchor.y);
-      ctx.lineTo(player.x - camera.x, player.y);
-      ctx.stroke();
-    }
-  }
-}
-
-function drawGoal() {
-  const x = goal.x - camera.x;
-  const y = goal.y;
-  ctx.fillStyle = '#ffc857';
-  ctx.fillRect(x, y, goal.w, goal.h);
-  ctx.fillStyle = '#fff4cf';
-  ctx.fillRect(x + 10, y + 10, goal.w - 20, goal.h - 20);
-}
-
-function drawPlayer() {
-  const x = player.x - camera.x;
-  const y = player.y;
-
-  ctx.save();
-  ctx.translate(x, y);
-
-  if (player.facing < 0) {
-    ctx.scale(-1, 1);
-  }
-
-  ctx.fillStyle = '#1a1f2f';
-  ctx.beginPath();
-  ctx.arc(0, 0, player.radius, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = '#eb2f34';
-  ctx.fillRect(-8, -18, 16, 20);
-
-  ctx.fillStyle = '#0d1320';
-  ctx.fillRect(-10, -22, 5, 18);
-  ctx.fillRect(5, -22, 5, 18);
-
-  ctx.fillStyle = '#2ab7ff';
-  ctx.fillRect(-12, 2, 6, 18);
-  ctx.fillRect(6, 2, 6, 18);
-
-  ctx.fillStyle = '#f7d95c';
-  ctx.fillRect(-3, -24, 6, 6);
-
-  ctx.restore();
+  camera.x = clamp(player.x - canvas.width * 0.38, 0, world.width - canvas.width);
+  const won = player.x + player.r > goal.x && player.x - player.r < goal.x + goal.w && player.y + player.r > goal.y && player.y - player.r < goal.y + goal.h;
+  if (won) statusEl.textContent = 'Mission complete!';
+  else if (player.swinging) statusEl.textContent = 'Web attached — release Web to launch';
+  else if (player.ground) statusEl.textContent = 'Jump near a yellow anchor, then tap Web';
 }
 
 function draw() {
-  drawBackground();
-  drawPlatforms();
-  drawGoal();
-  drawAnchors();
-  drawPlayer();
+  const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  sky.addColorStop(0, '#14a2ff'); sky.addColorStop(0.55, '#bce6ff'); sky.addColorStop(1, '#edf8ff');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < 24; i++) { const x = i * 110 - (camera.x * 0.5 % 110); const h = 70 + i % 6 * 40; ctx.fillStyle = 'rgba(29,50,76,.72)'; ctx.fillRect(x, world.groundY - h, 65, h); }
+  for (const p of platforms) { ctx.fillStyle = '#29466d'; ctx.fillRect(p.x - camera.x, p.y, p.w, p.h); }
+  for (const a of anchors) { ctx.fillStyle = '#ffde59'; ctx.beginPath(); ctx.arc(a.x - camera.x, a.y, 9, 0, Math.PI * 2); ctx.fill(); }
+  if (player.swinging) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(player.anchor.x - camera.x, player.anchor.y); ctx.lineTo(player.x - camera.x, player.y); ctx.stroke(); }
+  ctx.fillStyle = '#ffc857'; ctx.fillRect(goal.x - camera.x, goal.y, goal.w, goal.h);
+  const x = player.x - camera.x, y = player.y;
+  ctx.fillStyle = '#1a1f2f'; ctx.beginPath(); ctx.arc(x, y, player.r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#eb2f34'; ctx.fillRect(x - 8, y - 18, 16, 20);
+  ctx.fillStyle = '#2ab7ff'; ctx.fillRect(x - 12, y + 2, 6, 18); ctx.fillRect(x + 6, y + 2, 6, 18);
 }
 
-let lastTime = 0;
-function gameLoop(time) {
-  const delta = (time - lastTime) / 16.67 || 1;
-  lastTime = time;
-
-  update();
-  draw();
-  requestAnimationFrame(gameLoop);
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+function key(code, down) {
+  if (code === 'ArrowLeft' || code === 'KeyA') controls.left = down;
+  if (code === 'ArrowRight' || code === 'KeyD') controls.right = down;
+  if (down && (code === 'Space' || code === 'ArrowUp' || code === 'KeyW')) controls.jump = true;
+  if (down && (code === 'KeyS' || code === 'ShiftLeft' || code === 'ShiftRight')) controls.web = true;
 }
+document.addEventListener('keydown', e => { key(e.code, true); if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault(); });
+document.addEventListener('keyup', e => key(e.code, false));
 
-function setKeyState(code, pressed) {
-  if (code === 'ArrowLeft' || code === 'KeyA') controls.left = pressed;
-  if (code === 'ArrowRight' || code === 'KeyD') controls.right = pressed;
-  if (code === 'Space' || code === 'KeyW' || code === 'ArrowUp') {
-    if (pressed) controls.jumpQueued = true;
-  }
-  if (code === 'KeyS' || code === 'ShiftLeft' || code === 'ShiftRight') {
-    if (pressed) controls.swingQueued = true;
-  }
-}
-
-document.addEventListener('keydown', (event) => {
-  if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'Space', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'ShiftLeft', 'ShiftRight'].includes(event.code)) {
-    event.preventDefault();
-  }
-  setKeyState(event.code, true);
-});
-
-document.addEventListener('keyup', (event) => {
-  if (event.code === 'ArrowLeft' || event.code === 'KeyA') controls.left = false;
-  if (event.code === 'ArrowRight' || event.code === 'KeyD') controls.right = false;
-});
-
-document.querySelectorAll('.control-btn').forEach((button) => {
+document.querySelectorAll('.control-btn').forEach(button => {
   const type = button.dataset.control;
-  const queueAction = () => {
-    if (type === 'left') controls.left = true;
-    if (type === 'right') controls.right = true;
-    if (type === 'jump') controls.jumpQueued = true;
-    if (type === 'swing') controls.swingQueued = true;
-  };
-
-  const releaseAction = () => {
-    if (type === 'left') controls.left = false;
-    if (type === 'right') controls.right = false;
-  };
-
-  button.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    queueAction();
-  });
-
-  button.addEventListener('pointerup', releaseAction);
-  button.addEventListener('pointerleave', releaseAction);
+  const press = e => { e.preventDefault(); if (type === 'left') controls.left = true; if (type === 'right') controls.right = true; if (type === 'jump') controls.jump = true; if (type === 'swing') controls.web = true; };
+  const release = () => { if (type === 'left') controls.left = false; if (type === 'right') controls.right = false; };
+  button.addEventListener('pointerdown', press, { passive: false });
+  button.addEventListener('pointerup', release);
+  button.addEventListener('pointercancel', release);
+  button.addEventListener('pointerleave', release);
 });
 
-resetPlayer();
-requestAnimationFrame(gameLoop);
+reset();
+requestAnimationFrame(loop);

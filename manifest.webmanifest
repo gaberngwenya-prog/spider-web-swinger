@@ -1,0 +1,18 @@
+{
+  "name": "Spider Swing",
+  "short_name": "SpiderSwing",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#09131f",
+  "theme_color": "#09131f",
+  "description": "A mobile-friendly 2D web-swinging platformer",
+  "orientation": "landscape",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

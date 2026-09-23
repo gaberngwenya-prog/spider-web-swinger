@@ -1,6 +1,32 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
+const installBtn = document.getElementById('installBtn');
+
+let deferredPrompt = null;
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+  });
+}
+
+window.addEventListener('beforeinstallprompt', (event) => {
+  event.preventDefault();
+  deferredPrompt = event;
+  installBtn.hidden = false;
+});
+
+installBtn.addEventListener('click', async () => {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const choice = await deferredPrompt.userChoice;
+  if (choice.outcome === 'accepted') {
+    statusEl.textContent = 'App installed';
+  }
+  deferredPrompt = null;
+  installBtn.hidden = true;
+});
 
 const world = {
   width: 2200,
@@ -52,9 +78,7 @@ const player = {
   facing: 1,
 };
 
-const camera = {
-  x: 0,
-};
+const camera = { x: 0 };
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -90,10 +114,9 @@ function attachToNearestAnchor() {
   }
 
   if (best && best.dist < 120 && !player.swinging) {
-    const { anchor } = best;
-    player.anchor = anchor;
+    player.anchor = best.anchor;
     player.ropeLength = best.dist || 120;
-    player.swingAngle = Math.atan2(player.y - anchor.y, player.x - anchor.x);
+    player.swingAngle = Math.atan2(player.y - best.anchor.y, player.x - best.anchor.x);
     player.swingVelocity = 0;
     player.swinging = true;
     player.vx = 0;
@@ -130,13 +153,11 @@ function handleMovement() {
     if (controls.left) player.swingVelocity -= 0.02;
     if (controls.right) player.swingVelocity += 0.02;
 
-    player.swingVelocity += 0.015 * Math.cos(player.swingAngle);
     player.swingVelocity *= 0.985;
     player.swingAngle += player.swingVelocity;
 
     const prevX = player.x;
     const prevY = player.y;
-
     player.x = anchor.x + Math.cos(player.swingAngle) * player.ropeLength;
     player.y = anchor.y + Math.sin(player.swingAngle) * player.ropeLength;
     player.vx = (player.x - prevX) * 0.7;
@@ -333,7 +354,6 @@ function drawPlayer() {
 
   if (player.facing < 0) {
     ctx.scale(-1, 1);
-    ctx.translate(-x * 2, 0);
   }
 
   ctx.fillStyle = '#1a1f2f';
@@ -373,7 +393,6 @@ function gameLoop(time) {
 
   update();
   draw();
-
   requestAnimationFrame(gameLoop);
 }
 
